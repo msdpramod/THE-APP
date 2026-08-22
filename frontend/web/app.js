@@ -6,6 +6,8 @@ const headline = document.querySelector('#headline');
 const subhead = document.querySelector('#subhead');
 const navButtons = [...document.querySelectorAll('.nav-pill')];
 const quoteResult = document.querySelector('#quote-result');
+const bookingResult = document.querySelector('#booking-result');
+const bookButton = document.querySelector('#book-btn');
 const restaurantList = document.querySelector('#restaurant-list');
 
 const locations = {
@@ -15,8 +17,12 @@ const locations = {
   'Jubilee Hills': { latitude: 17.4326, longitude: 78.4071 }
 };
 
+let latestRideRequest = null;
+let latestIdempotencyKey = null;
+
 navButtons.forEach(button => button.addEventListener('click', () => setMode(button.dataset.mode)));
 document.querySelector('#quote-btn').addEventListener('click', requestQuote);
+bookButton.addEventListener('click', requestRide);
 document.querySelector('#refresh-food').addEventListener('click', loadRestaurants);
 
 function setMode(mode) {
@@ -31,27 +37,61 @@ function setMode(mode) {
   if (food) loadRestaurants();
 }
 
-async function requestQuote() {
+function currentRideRequest() {
   const pickupLabel = document.querySelector('#pickup').value.trim();
   const dropoffLabel = document.querySelector('#dropoff').value.trim();
   const pickup = locations[pickupLabel] || locations['Madhapur'];
   const dropoff = locations[dropoffLabel] || locations['HITEC City'];
+  return {
+    riderId: 'demo-rider',
+    pickup: { label: pickupLabel || 'Pickup', ...pickup },
+    dropoff: { label: dropoffLabel || 'Dropoff', ...dropoff }
+  };
+}
+
+async function requestQuote() {
+  latestRideRequest = currentRideRequest();
+  latestIdempotencyKey = crypto.randomUUID();
   quoteResult.textContent = 'Calculating a fair estimate…';
+  bookingResult.textContent = '';
+  bookButton.classList.add('hidden');
 
   try {
     const response = await fetch(`${API_BASE}/api/v1/rides/quote`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        pickup: { label: pickupLabel || 'Pickup', ...pickup },
-        dropoff: { label: dropoffLabel || 'Dropoff', ...dropoff }
-      })
+      body: JSON.stringify({ pickup: latestRideRequest.pickup, dropoff: latestRideRequest.dropoff })
     });
     if (!response.ok) throw new Error(`Quote request failed (${response.status})`);
     const quote = await response.json();
     quoteResult.innerHTML = `<strong>₹${quote.estimatedFare}</strong> · ${quote.distanceKm} km · about ${quote.estimatedArrivalMinutes} min`;
+    bookButton.classList.remove('hidden');
   } catch (error) {
     quoteResult.textContent = 'API unavailable. Start the platform API on port 8080 and try again.';
+  }
+}
+
+async function requestRide() {
+  if (!latestRideRequest || !latestIdempotencyKey) return;
+  bookButton.disabled = true;
+  bookingResult.textContent = 'Requesting your ride…';
+
+  try {
+    const response = await fetch(`${API_BASE}/api/v1/rides/bookings`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Idempotency-Key': latestIdempotencyKey
+      },
+      body: JSON.stringify(latestRideRequest)
+    });
+    if (!response.ok) throw new Error(`Booking request failed (${response.status})`);
+    const booking = await response.json();
+    bookingResult.innerHTML = `<strong>Ride requested</strong> · ${booking.status} · ${booking.bookingId.slice(0, 8)}`;
+  } catch (error) {
+    bookingResult.textContent = 'Ride request failed. Retry is safe because THE APP reuses the same idempotency key.';
+  } finally {
+    bookButton.disabled = false;
   }
 }
 
