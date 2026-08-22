@@ -29,7 +29,7 @@ public class RideBookingController {
     private final Map<String, String> bookingIdByIdempotencyKey = new ConcurrentHashMap<>();
 
     @PostMapping
-    public ResponseEntity<RideBookingResponse> create(
+    public synchronized ResponseEntity<RideBookingResponse> create(
             @RequestHeader("Idempotency-Key") String idempotencyKey,
             @Valid @RequestBody RideBookingRequest request) {
 
@@ -51,12 +51,8 @@ public class RideBookingController {
                 RideStatus.REQUESTED,
                 Instant.now());
 
-        String winningId = bookingIdByIdempotencyKey.putIfAbsent(idempotencyKey, bookingId);
-        if (winningId != null) {
-            return ResponseEntity.ok(bookingsById.get(winningId));
-        }
-
         bookingsById.put(bookingId, booking);
+        bookingIdByIdempotencyKey.put(idempotencyKey, bookingId);
         return ResponseEntity.status(HttpStatus.CREATED).body(booking);
     }
 
