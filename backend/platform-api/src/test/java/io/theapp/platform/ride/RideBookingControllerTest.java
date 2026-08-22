@@ -1,8 +1,9 @@
 package io.theapp.platform.ride;
 
+import com.jayway.jsonpath.JsonPath;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.boot.webmvc.test.autoconfigure.WebMvcTest;
+import org.springframework.boot.test.autoconfigure.web.servlet.WebMvcTest;
 import org.springframework.http.MediaType;
 import org.springframework.test.web.servlet.MockMvc;
 
@@ -45,8 +46,7 @@ class RideBookingControllerTest {
                 .andExpect(status().isCreated())
                 .andReturn().getResponse().getContentAsString();
 
-        String bookingId = com.fasterxml.jackson.databind.json.JsonMapper.builder().build()
-                .readTree(first).get("bookingId").asText();
+        String bookingId = JsonPath.read(first, "$.bookingId");
 
         mockMvc.perform(post("/api/v1/rides/bookings")
                         .header("Idempotency-Key", "booking-replay-1")
