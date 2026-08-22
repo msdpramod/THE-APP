@@ -4,18 +4,22 @@ THE APP is an evolving full-stack mobility and delivery platform combining ride-
 
 The codebase evolves in small, reviewable increments. Production-scale capabilities such as event-driven workflows, idempotency, observability, caching, partitioning, and multi-region deployment are added behind tested boundaries instead of being simulated with premature complexity.
 
-## Foundation 001
+## Foundation 002
 
-The first vertical slice contains:
+The current vertical slice contains:
 
 - Java 17 + Spring Boot 4.1.1 platform API.
 - `POST /api/v1/rides/quote` for validated ride estimates.
+- `POST /api/v1/rides/bookings` for idempotent ride requests using `Idempotency-Key`.
+- `GET /api/v1/rides/bookings/{bookingId}` for booking lookup.
 - `GET /api/v1/food/restaurants` for restaurant discovery.
-- Responsive customer web UI switching between ride and food experiences.
+- Responsive customer web UI switching between ride and food experiences and turning a quote into a ride request.
 - Actuator health/info/metrics endpoints and health probes.
 - MVC contract tests and GitHub Actions verification.
 - A non-root backend Docker image.
 - Architecture and evolution documentation.
+
+The booking state is intentionally process-local in Foundation 002. The API contract is test-covered; PostgreSQL durability is the next step.
 
 ## Run locally
 
@@ -63,6 +67,6 @@ THE-APP/
 
 ## Next target
 
-PostgreSQL + Flyway persistence, then an idempotent ride-booking state machine and transactional outbox before Kafka-based driver matching.
+PostgreSQL + Flyway persistence for bookings and idempotency, followed by a transactional outbox and Kafka-based driver matching.
 
 See [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) for system boundaries and [`docs/EVOLUTION.md`](docs/EVOLUTION.md) for the change log and known gaps.
