@@ -1,5 +1,31 @@
 # Evolution Log
 
+## Foundation 003
+
+### Added
+
+- Idempotency-key payload consistency for ride booking creation.
+- Reusing the same `Idempotency-Key` with the same request still returns the original booking.
+- Reusing the same `Idempotency-Key` with a different rider/pickup/dropoff request now returns HTTP `409 Conflict` instead of silently returning an unrelated prior booking.
+- MVC coverage for conflicting idempotency-key reuse.
+
+### Why this shape
+
+Idempotency is only safe when a retry key is bound to the original operation. Returning a previous booking for a materially different request can attach the wrong trip to a caller and becomes especially dangerous once pricing, payment authorization, and driver matching are introduced. Foundation 003 closes that correctness gap before durable persistence and asynchronous processing.
+
+### Known risks / gaps
+
+- Booking and idempotency state are still process-local and disappear on restart.
+- Multiple application instances still do not share idempotency state.
+- The request comparison is an in-memory structural comparison; durable storage will persist a canonical request fingerprint alongside the idempotency record.
+- `riderId` is still a demonstration identifier because authentication is not implemented yet.
+- Booking creation does not yet bind to a persisted quote or pricing snapshot.
+- No driver matching event is emitted yet.
+
+### Next evolution target
+
+Move booking state and idempotency records into PostgreSQL with Flyway migrations. Persist a canonical request fingerprint, booking, and outbox event in one database transaction. Kafka can then publish replay-safe ride-requested events for asynchronous driver matching without weakening the HTTP contract.
+
 ## Foundation 002
 
 ### Added
