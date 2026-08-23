@@ -1,12 +1,12 @@
 # THE APP Architecture
 
-## Current stage: Foundation 002
+## Current stage: Foundation 003
 
 THE APP is a modular Spring Boot platform API plus a lightweight customer web shell. Domain contracts, tests, observability, and deployment boundaries are established before services are split across the network.
 
 ## Product domains
 
-- **Ride:** quoting and idempotent booking now; durable booking state, driver matching, trip lifecycle, live location, surge pricing, and settlement next.
+- **Ride:** quoting and retry-safe idempotent booking now; durable booking state, driver matching, trip lifecycle, live location, surge pricing, and settlement next.
 - **Food:** restaurant discovery now; catalog, cart, ordering, kitchen workflow, delivery matching, and settlement next.
 - **Shared platform:** identity, payments, wallet, notifications, risk, experimentation, and observability will be introduced behind stable contracts.
 
@@ -40,15 +40,17 @@ Customer UI
    v
 Ride booking API
    |
-   |-- first request ------> create REQUESTED booking
+   |-- first request ------------------> create REQUESTED booking
    |
-   `-- duplicate retry ---> return original booking
+   |-- same key + same payload --------> return original booking
+   |
+   `-- same key + different payload ---> 409 Conflict
 
-Foundation 002: process-local state
-Next: PostgreSQL transaction -> booking + outbox event -> Kafka -> matching
+Foundation 003: process-local state with request/key binding
+Next: PostgreSQL transaction -> fingerprint + booking + outbox event -> Kafka -> matching
 ```
 
-The idempotency contract is intentionally introduced before persistence. Client retry behavior is now stable and test-covered; the storage mechanism can evolve from process memory to PostgreSQL without changing the HTTP contract.
+The idempotency contract is intentionally introduced before persistence. A retry key is now bound to the original ride request, preventing accidental reuse for a different trip. Client retry behavior is stable and test-covered; the storage mechanism can evolve from process memory to PostgreSQL without changing the HTTP contract.
 
 ## Decisions
 
@@ -75,14 +77,15 @@ Every domain receives contract/controller tests before asynchronous messaging or
 
 ### ADR-005 — Idempotency before asynchronous mutation
 
-Retry-sensitive mutation APIs require an idempotency contract before events, payment workflows, or service extraction are introduced. Foundation 002 keeps the implementation local while establishing the client-visible semantics. Durable idempotency moves to PostgreSQL next.
+Retry-sensitive mutation APIs require an idempotency contract before events, payment workflows, or service extraction are introduced. Foundation 003 binds each key to the original request and rejects conflicting reuse. Durable idempotency moves to PostgreSQL next, where a canonical request fingerprint will be persisted alongside the booking.
 
 ## Near-term target architecture
 
 1. PostgreSQL persistence with Flyway migrations for ride booking and idempotency records.
-2. Transactional outbox written in the same transaction as booking state.
-3. Kafka publisher and replay-safe driver-matching consumer.
-4. Redis for hot read paths and geospatial driver availability.
-5. OpenTelemetry traces, Prometheus metrics, structured logs, and SLO dashboards.
-6. Authentication/authorization boundaries for customer, driver, restaurant, and operations roles.
-7. Container images and staged deployment manifests.
+2. Persist a canonical request fingerprint with each idempotency record.
+3. Transactional outbox written in the same transaction as booking state.
+4. Kafka publisher and replay-safe driver-matching consumer.
+5. Redis for hot read paths and geospatial driver availability.
+6. OpenTelemetry traces, Prometheus metrics, structured logs, and SLO dashboards.
+7. Authentication/authorization boundaries for customer, driver, restaurant, and operations roles.
+8. Container images and staged deployment manifests.
