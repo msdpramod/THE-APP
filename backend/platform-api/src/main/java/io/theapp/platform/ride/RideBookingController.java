@@ -27,6 +27,7 @@ public class RideBookingController {
 
     private final Map<String, RideBookingResponse> bookingsById = new ConcurrentHashMap<>();
     private final Map<String, String> bookingIdByIdempotencyKey = new ConcurrentHashMap<>();
+    private final Map<String, RideBookingRequest> requestByIdempotencyKey = new ConcurrentHashMap<>();
 
     @PostMapping
     public synchronized ResponseEntity<RideBookingResponse> create(
@@ -39,6 +40,10 @@ public class RideBookingController {
 
         String existingId = bookingIdByIdempotencyKey.get(idempotencyKey);
         if (existingId != null) {
+            RideBookingRequest originalRequest = requestByIdempotencyKey.get(idempotencyKey);
+            if (!request.equals(originalRequest)) {
+                return ResponseEntity.status(HttpStatus.CONFLICT).build();
+            }
             return ResponseEntity.ok(bookingsById.get(existingId));
         }
 
@@ -52,6 +57,7 @@ public class RideBookingController {
                 Instant.now());
 
         bookingsById.put(bookingId, booking);
+        requestByIdempotencyKey.put(idempotencyKey, request);
         bookingIdByIdempotencyKey.put(idempotencyKey, bookingId);
         return ResponseEntity.status(HttpStatus.CREATED).body(booking);
     }
