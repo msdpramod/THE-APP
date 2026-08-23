@@ -26,6 +26,14 @@ class RideBookingControllerTest {
             }
             """;
 
+    private static final String DIFFERENT_BODY = """
+            {
+              "riderId":"demo-rider",
+              "pickup":{"label":"Madhapur","latitude":17.4483,"longitude":78.3915},
+              "dropoff":{"label":"Gachibowli","latitude":17.4401,"longitude":78.3489}
+            }
+            """;
+
     @Test
     void createsBookingAndReturnsRequestedState() throws Exception {
         mockMvc.perform(post("/api/v1/rides/bookings")
@@ -54,6 +62,21 @@ class RideBookingControllerTest {
                         .content(BODY))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.bookingId").value(bookingId));
+    }
+
+    @Test
+    void rejectsSameIdempotencyKeyForDifferentPayload() throws Exception {
+        mockMvc.perform(post("/api/v1/rides/bookings")
+                        .header("Idempotency-Key", "booking-conflict-1")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(BODY))
+                .andExpect(status().isCreated());
+
+        mockMvc.perform(post("/api/v1/rides/bookings")
+                        .header("Idempotency-Key", "booking-conflict-1")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(DIFFERENT_BODY))
+                .andExpect(status().isConflict());
     }
 
     @Test
