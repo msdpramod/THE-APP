@@ -4,6 +4,13 @@ spring:
   threads:
     virtual:
       enabled: false
+  datasource:
+    url: ${THE_APP_DB_URL:jdbc:h2:file:./data/theapp;MODE=PostgreSQL;DATABASE_TO_LOWER=TRUE;DEFAULT_NULL_ORDERING=HIGH}
+    username: ${THE_APP_DB_USER:sa}
+    password: ${THE_APP_DB_PASSWORD:}
+    driver-class-name: ${THE_APP_DB_DRIVER:org.h2.Driver}
+  flyway:
+    enabled: true
 
 server:
   shutdown: graceful
