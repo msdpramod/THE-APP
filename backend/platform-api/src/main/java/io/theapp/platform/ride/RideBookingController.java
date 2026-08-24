@@ -16,55 +16,37 @@ import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
 
 import java.time.Instant;
-import java.util.Map;
-import java.util.Optional;
-import java.util.UUID;
-import java.util.concurrent.ConcurrentHashMap;
 
 @RestController
 @RequestMapping("/api/v1/rides/bookings")
 public class RideBookingController {
 
-    private final Map<String, RideBookingResponse> bookingsById = new ConcurrentHashMap<>();
-    private final Map<String, String> bookingIdByIdempotencyKey = new ConcurrentHashMap<>();
-    private final Map<String, RideBookingRequest> requestByIdempotencyKey = new ConcurrentHashMap<>();
+    private final RideBookingStore store;
+
+    public RideBookingController(RideBookingStore store) {
+        this.store = store;
+    }
 
     @PostMapping
-    public synchronized ResponseEntity<RideBookingResponse> create(
+    public ResponseEntity<RideBookingResponse> create(
             @RequestHeader("Idempotency-Key") String idempotencyKey,
             @Valid @RequestBody RideBookingRequest request) {
 
-        if (idempotencyKey == null || idempotencyKey.isBlank()) {
+        if (idempotencyKey == null || idempotencyKey.isBlank() || idempotencyKey.length() > 128) {
             return ResponseEntity.badRequest().build();
         }
 
-        String existingId = bookingIdByIdempotencyKey.get(idempotencyKey);
-        if (existingId != null) {
-            RideBookingRequest originalRequest = requestByIdempotencyKey.get(idempotencyKey);
-            if (!request.equals(originalRequest)) {
-                return ResponseEntity.status(HttpStatus.CONFLICT).build();
-            }
-            return ResponseEntity.ok(bookingsById.get(existingId));
-        }
-
-        String bookingId = UUID.randomUUID().toString();
-        RideBookingResponse booking = new RideBookingResponse(
-                bookingId,
-                request.riderId(),
-                request.pickup(),
-                request.dropoff(),
-                RideStatus.REQUESTED,
-                Instant.now());
-
-        bookingsById.put(bookingId, booking);
-        requestByIdempotencyKey.put(idempotencyKey, request);
-        bookingIdByIdempotencyKey.put(idempotencyKey, bookingId);
-        return ResponseEntity.status(HttpStatus.CREATED).body(booking);
+        RideBookingStore.CreateResult result = store.create(idempotencyKey, request);
+        return switch (result.outcome()) {
+            case CREATED -> ResponseEntity.status(HttpStatus.CREATED).body(result.booking());
+            case REPLAYED -> ResponseEntity.ok(result.booking());
+            case CONFLICT -> ResponseEntity.status(HttpStatus.CONFLICT).build();
+        };
     }
 
     @GetMapping("/{bookingId}")
     public ResponseEntity<RideBookingResponse> get(@PathVariable String bookingId) {
-        return Optional.ofNullable(bookingsById.get(bookingId))
+        return store.findById(bookingId)
                 .map(ResponseEntity::ok)
                 .orElseGet(() -> ResponseEntity.notFound().build());
     }
