@@ -3,16 +3,25 @@ package io.theapp.platform.ride;
 import com.jayway.jsonpath.JsonPath;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.boot.test.autoconfigure.web.servlet.WebMvcTest;
+import org.springframework.boot.test.context.SpringBootTest;
+import org.springframework.boot.webmvc.test.autoconfigure.AutoConfigureMockMvc;
 import org.springframework.http.MediaType;
 import org.springframework.test.web.servlet.MockMvc;
+
+import java.util.UUID;
 
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
-@WebMvcTest(RideBookingController.class)
+@SpringBootTest(properties = {
+        "spring.datasource.url=jdbc:h2:mem:ridebooking;MODE=PostgreSQL;DB_CLOSE_DELAY=-1",
+        "spring.datasource.driver-class-name=org.h2.Driver",
+        "spring.datasource.username=sa",
+        "spring.datasource.password="
+})
+@AutoConfigureMockMvc
 class RideBookingControllerTest {
 
     @Autowired
@@ -37,7 +46,7 @@ class RideBookingControllerTest {
     @Test
     void createsBookingAndReturnsRequestedState() throws Exception {
         mockMvc.perform(post("/api/v1/rides/bookings")
-                        .header("Idempotency-Key", "booking-create-1")
+                        .header("Idempotency-Key", key())
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(BODY))
                 .andExpect(status().isCreated())
@@ -47,8 +56,9 @@ class RideBookingControllerTest {
 
     @Test
     void replaysSameBookingForSameIdempotencyKey() throws Exception {
+        String idempotencyKey = key();
         String first = mockMvc.perform(post("/api/v1/rides/bookings")
-                        .header("Idempotency-Key", "booking-replay-1")
+                        .header("Idempotency-Key", idempotencyKey)
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(BODY))
                 .andExpect(status().isCreated())
@@ -57,7 +67,7 @@ class RideBookingControllerTest {
         String bookingId = JsonPath.read(first, "$.bookingId");
 
         mockMvc.perform(post("/api/v1/rides/bookings")
-                        .header("Idempotency-Key", "booking-replay-1")
+                        .header("Idempotency-Key", idempotencyKey)
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(BODY))
                 .andExpect(status().isOk())
@@ -66,14 +76,15 @@ class RideBookingControllerTest {
 
     @Test
     void rejectsSameIdempotencyKeyForDifferentPayload() throws Exception {
+        String idempotencyKey = key();
         mockMvc.perform(post("/api/v1/rides/bookings")
-                        .header("Idempotency-Key", "booking-conflict-1")
+                        .header("Idempotency-Key", idempotencyKey)
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(BODY))
                 .andExpect(status().isCreated());
 
         mockMvc.perform(post("/api/v1/rides/bookings")
-                        .header("Idempotency-Key", "booking-conflict-1")
+                        .header("Idempotency-Key", idempotencyKey)
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(DIFFERENT_BODY))
                 .andExpect(status().isConflict());
@@ -88,8 +99,21 @@ class RideBookingControllerTest {
     }
 
     @Test
+    void rejectsOversizedIdempotencyKey() throws Exception {
+        mockMvc.perform(post("/api/v1/rides/bookings")
+                        .header("Idempotency-Key", "x".repeat(129))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(BODY))
+                .andExpect(status().isBadRequest());
+    }
+
+    @Test
     void returnsNotFoundForUnknownBooking() throws Exception {
         mockMvc.perform(get("/api/v1/rides/bookings/does-not-exist"))
                 .andExpect(status().isNotFound());
+    }
+
+    private String key() {
+        return "test-" + UUID.randomUUID();
     }
 }
