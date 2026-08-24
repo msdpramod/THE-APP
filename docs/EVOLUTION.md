@@ -1,5 +1,33 @@
 # Evolution Log
 
+## Foundation 004
+
+### Added
+
+- Durable ride booking persistence through Spring JDBC.
+- Flyway-managed `ride_booking` schema with a database-level unique `Idempotency-Key` constraint.
+- Persisted SHA-256 request fingerprints so retry identity survives process restarts and can be shared across replicas using the same database.
+- Duplicate-key race handling: concurrent requests for the same idempotency key converge on the database winner and preserve the existing replay/conflict contract.
+- Local durable H2 development storage in PostgreSQL compatibility mode, with environment-variable overrides for a PostgreSQL deployment.
+- Full application MockMvc coverage for durable booking creation, replay, conflicting payload reuse, oversized keys, and lookup behavior.
+- Correct Spring Boot 4.1 MVC test imports across ride and food tests.
+
+### Why this shape
+
+The previous in-memory idempotency maps were correct only inside one JVM. That is not sufficient for horizontal scaling or restart safety. Foundation 004 moves correctness to the transactional store before introducing Kafka. The HTTP contract stays unchanged while the implementation becomes restart-safe and compatible with multiple application instances sharing one database.
+
+### Known risks / gaps
+
+- The default developer database is file-backed H2 for zero-dependency local startup; production must provide PostgreSQL connection settings through `THE_APP_DB_*` environment variables.
+- Booking creation still does not persist the ride quote or pricing snapshot.
+- There is no transactional outbox yet, so no durable `RideRequested` event is emitted.
+- Authentication and authorization are still absent; `riderId` remains caller-provided demonstration data.
+- Database connection-pool sizing, production migrations, backup/restore, encryption, and HA settings are not yet deployment-tested.
+
+### Next evolution target
+
+Add a transactional outbox table and write a `RideRequested` event in the same database transaction as the booking. Add a publisher lease/retry strategy and replay tests before connecting Kafka. This creates an auditable, loss-resistant boundary between synchronous booking and asynchronous driver matching.
+
 ## Foundation 003
 
 ### Added
@@ -39,19 +67,13 @@ Move booking state and idempotency records into PostgreSQL with Flyway migration
 
 ### Why this shape
 
-Mutation safety is more important than adding Kafka prematurely. A ride request is a money- and state-sensitive operation, so THE APP now establishes an idempotent HTTP contract before adding durable storage or asynchronous matching. The current in-memory implementation is intentionally temporary; the API behavior and tests are the durable part of this increment.
+Mutation safety is more important than adding Kafka prematurely. A ride request is a money- and state-sensitive operation, so THE APP establishes an idempotent HTTP contract before durable storage or asynchronous matching. The API behavior and tests are the durable part of this increment.
 
 ### Known risks / gaps
 
-- Booking/idempotency state is process-local and disappears on restart.
-- Multiple application instances would not share idempotency state.
 - `riderId` is still a demonstration identifier because authentication is not implemented yet.
 - Booking creation does not yet bind to a persisted quote or pricing snapshot.
 - No driver matching event is emitted yet.
-
-### Next evolution target
-
-Move booking state and idempotency records into PostgreSQL with Flyway migrations. Persist the booking and an outbox event in one database transaction, then publish that event to Kafka for asynchronous driver matching. This removes the single-instance limitation without weakening the tested HTTP contract.
 
 ## Foundation 001
 
@@ -70,18 +92,4 @@ Move booking state and idempotency records into PostgreSQL with Flyway migration
 
 ### Why this shape
 
-The repository started empty. The first evolution establishes a runnable vertical slice and review gates before introducing databases, Kafka, Redis, auth, or service decomposition. This keeps later evolution measurable and reversible.
-
-### Known risks / gaps
-
-- Ride fare logic is intentionally simple and is not production pricing.
-- Restaurant data is in-memory seed data.
-- No authentication or authorization exists yet.
-- No persistence or transactional outbox exists yet.
-- No distributed tracing or Prometheus registry has been wired yet.
-- Frontend location lookup currently maps a small demonstration set of Hyderabad locations.
-- Production CORS configuration and TLS termination are not yet defined.
-
-### Next evolution target
-
-Introduce PostgreSQL persistence with Flyway migrations, durable idempotency, and a transactional outbox before asynchronous Kafka-based driver matching.
+The repository started empty. The first evolution established a runnable vertical slice and review gates before introducing databases, Kafka, Redis, auth, or service decomposition. This keeps later evolution measurable and reversible.
