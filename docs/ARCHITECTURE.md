@@ -1,12 +1,12 @@
 # THE APP Architecture
 
-## Current stage: Foundation 003
+## Current stage: Foundation 004
 
-THE APP is a modular Spring Boot platform API plus a lightweight customer web shell. Domain contracts, tests, observability, and deployment boundaries are established before services are split across the network.
+THE APP is a modular Spring Boot platform API plus a lightweight customer web shell. Domain contracts, tests, observability, durable mutation semantics, and deployment boundaries are established before services are split across the network.
 
 ## Product domains
 
-- **Ride:** quoting and retry-safe idempotent booking now; durable booking state, driver matching, trip lifecycle, live location, surge pricing, and settlement next.
+- **Ride:** quoting plus durable, retry-safe idempotent booking now; outbox, driver matching, trip lifecycle, live location, surge pricing, and settlement next.
 - **Food:** restaurant discovery now; catalog, cart, ordering, kitchen workflow, delivery matching, and settlement next.
 - **Shared platform:** identity, payments, wallet, notifications, risk, experimentation, and observability will be introduced behind stable contracts.
 
@@ -28,7 +28,7 @@ Outbox / CDC -> Kafka -> async domain consumers
                          |-> analytics
 ```
 
-The current codebase does **not** claim million-TPS throughput. It creates the seams required to scale safely: versioned APIs, explicit validation, bounded domains, idempotent mutation contracts, health probes, CI gates, and evolution documentation.
+The current codebase does **not** claim million-TPS throughput. It creates the seams required to scale safely: versioned APIs, explicit validation, bounded domains, durable idempotent mutation contracts, health probes, CI gates, and evolution documentation.
 
 ## Ride booking boundary
 
@@ -40,17 +40,19 @@ Customer UI
    v
 Ride booking API
    |
-   |-- first request ------------------> create REQUESTED booking
+   | SHA-256 canonical request fingerprint
+   v
+Transactional database
    |
-   |-- same key + same payload --------> return original booking
-   |
-   `-- same key + different payload ---> 409 Conflict
+   |-- first key ----------------------> INSERT REQUESTED booking
+   |-- same key + same fingerprint ---> return persisted booking
+   `-- same key + other fingerprint --> 409 Conflict
 
-Foundation 003: process-local state with request/key binding
-Next: PostgreSQL transaction -> fingerprint + booking + outbox event -> Kafka -> matching
+Database UNIQUE(idempotency_key) also arbitrates concurrent replicas.
+Next: booking + outbox event in one transaction -> Kafka -> matching
 ```
 
-The idempotency contract is intentionally introduced before persistence. A retry key is now bound to the original ride request, preventing accidental reuse for a different trip. Client retry behavior is stable and test-covered; the storage mechanism can evolve from process memory to PostgreSQL without changing the HTTP contract.
+Foundation 004 moves retry correctness out of JVM memory and into the transactional store. The default developer database is file-backed H2 in PostgreSQL compatibility mode for zero-dependency startup. Production deployments are expected to supply PostgreSQL connection settings with environment variables. Flyway owns schema evolution so the same migration history travels with each environment.
 
 ## Decisions
 
@@ -77,15 +79,19 @@ Every domain receives contract/controller tests before asynchronous messaging or
 
 ### ADR-005 — Idempotency before asynchronous mutation
 
-Retry-sensitive mutation APIs require an idempotency contract before events, payment workflows, or service extraction are introduced. Foundation 003 binds each key to the original request and rejects conflicting reuse. Durable idempotency moves to PostgreSQL next, where a canonical request fingerprint will be persisted alongside the booking.
+Retry-sensitive mutation APIs require an idempotency contract before events, payment workflows, or service extraction are introduced. Each key is persisted with a canonical SHA-256 request fingerprint. A unique database constraint provides cross-replica arbitration; conflicting key reuse remains HTTP 409.
+
+### ADR-006 — Database before broker
+
+A broker is not the source of truth for accepting a ride. Booking state and the future outbox event must commit atomically in the transactional database. Kafka publishing is introduced only after the outbox has replay and failure tests.
 
 ## Near-term target architecture
 
-1. PostgreSQL persistence with Flyway migrations for ride booking and idempotency records.
-2. Persist a canonical request fingerprint with each idempotency record.
-3. Transactional outbox written in the same transaction as booking state.
-4. Kafka publisher and replay-safe driver-matching consumer.
-5. Redis for hot read paths and geospatial driver availability.
-6. OpenTelemetry traces, Prometheus metrics, structured logs, and SLO dashboards.
-7. Authentication/authorization boundaries for customer, driver, restaurant, and operations roles.
-8. Container images and staged deployment manifests.
+1. Transactional outbox written in the same transaction as ride booking state.
+2. Publisher lease/retry strategy with explicit delivery semantics and replay tests.
+3. Kafka publisher and replay-safe driver-matching consumer.
+4. Redis for hot read paths and geospatial driver availability.
+5. OpenTelemetry traces, Prometheus metrics, structured logs, and SLO dashboards.
+6. Authentication/authorization boundaries for customer, driver, restaurant, and operations roles.
+7. Persisted quote/pricing snapshots and payment authorization boundaries.
+8. PostgreSQL HA/backup configuration and staged deployment manifests.
