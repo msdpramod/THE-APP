@@ -6,10 +6,12 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.boot.webmvc.test.autoconfigure.AutoConfigureMockMvc;
 import org.springframework.http.MediaType;
+import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.test.web.servlet.MockMvc;
 
 import java.util.UUID;
 
+import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
@@ -26,6 +28,9 @@ class RideBookingControllerTest {
 
     @Autowired
     private MockMvc mockMvc;
+
+    @Autowired
+    private JdbcTemplate jdbcTemplate;
 
     private static final String BODY = """
             {
@@ -52,6 +57,32 @@ class RideBookingControllerTest {
                 .andExpect(status().isCreated())
                 .andExpect(jsonPath("$.bookingId").isNotEmpty())
                 .andExpect(jsonPath("$.status").value("REQUESTED"));
+    }
+
+    @Test
+    void persistsExactlyOneRideRequestedOutboxEventAcrossReplay() throws Exception {
+        String idempotencyKey = key();
+        String first = mockMvc.perform(post("/api/v1/rides/bookings")
+                        .header("Idempotency-Key", idempotencyKey)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(BODY))
+                .andExpect(status().isCreated())
+                .andReturn().getResponse().getContentAsString();
+
+        String bookingId = JsonPath.read(first, "$.bookingId");
+
+        mockMvc.perform(post("/api/v1/rides/bookings")
+                        .header("Idempotency-Key", idempotencyKey)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(BODY))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.bookingId").value(bookingId));
+
+        Integer count = jdbcTemplate.queryForObject(
+                "SELECT COUNT(*) FROM outbox_event WHERE aggregate_id = ? AND event_type = 'RideRequested'",
+                Integer.class,
+                bookingId);
+        assertEquals(1, count);
     }
 
     @Test
