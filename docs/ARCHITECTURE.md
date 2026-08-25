@@ -1,12 +1,12 @@
 # THE APP Architecture
 
-## Current stage: Foundation 004
+## Current stage: Foundation 005
 
 THE APP is a modular Spring Boot platform API plus a lightweight customer web shell. Domain contracts, tests, observability, durable mutation semantics, and deployment boundaries are established before services are split across the network.
 
 ## Product domains
 
-- **Ride:** quoting plus durable, retry-safe idempotent booking now; outbox, driver matching, trip lifecycle, live location, surge pricing, and settlement next.
+- **Ride:** quoting plus durable, retry-safe booking and transactional `RideRequested` outbox now; publishing, driver matching, trip lifecycle, live location, surge pricing, and settlement next.
 - **Food:** restaurant discovery now; catalog, cart, ordering, kitchen workflow, delivery matching, and settlement next.
 - **Shared platform:** identity, payments, wallet, notifications, risk, experimentation, and observability will be introduced behind stable contracts.
 
@@ -28,7 +28,7 @@ Outbox / CDC -> Kafka -> async domain consumers
                          |-> analytics
 ```
 
-The current codebase does **not** claim million-TPS throughput. It creates the seams required to scale safely: versioned APIs, explicit validation, bounded domains, durable idempotent mutation contracts, health probes, CI gates, and evolution documentation.
+The current codebase does **not** claim million-TPS throughput. It creates the seams required to scale safely: versioned APIs, explicit validation, bounded domains, durable idempotent mutation contracts, transactional event capture, health probes, CI gates, and evolution documentation.
 
 ## Ride booking boundary
 
@@ -42,17 +42,19 @@ Ride booking API
    |
    | SHA-256 canonical request fingerprint
    v
-Transactional database
-   |
-   |-- first key ----------------------> INSERT REQUESTED booking
-   |-- same key + same fingerprint ---> return persisted booking
-   `-- same key + other fingerprint --> 409 Conflict
+Database transaction
+   |-- INSERT ride_booking
+   `-- INSERT outbox_event(RideRequested, PENDING)
+          |
+          `-- future leased publisher -> Kafka -> matching
 
-Database UNIQUE(idempotency_key) also arbitrates concurrent replicas.
-Next: booking + outbox event in one transaction -> Kafka -> matching
+same key + same fingerprint -> persisted booking, no second event
+same key + other fingerprint -> 409 Conflict
 ```
 
-Foundation 004 moves retry correctness out of JVM memory and into the transactional store. The default developer database is file-backed H2 in PostgreSQL compatibility mode for zero-dependency startup. Production deployments are expected to supply PostgreSQL connection settings with environment variables. Flyway owns schema evolution so the same migration history travels with each environment.
+Foundation 005 closes the dual-write gap between accepting a ride and recording the event that will eventually trigger asynchronous matching. A newly accepted booking and its `RideRequested` outbox row are persisted in the same Spring transaction. If either write fails, neither should commit. Replays of the same idempotency key return the existing booking and do not append another event.
+
+The default developer database remains file-backed H2 in PostgreSQL compatibility mode for zero-dependency startup. Production deployments are expected to supply PostgreSQL connection settings with environment variables. Flyway owns schema evolution so the same migration history travels with each environment.
 
 ## Decisions
 
@@ -83,15 +85,18 @@ Retry-sensitive mutation APIs require an idempotency contract before events, pay
 
 ### ADR-006 — Database before broker
 
-A broker is not the source of truth for accepting a ride. Booking state and the future outbox event must commit atomically in the transactional database. Kafka publishing is introduced only after the outbox has replay and failure tests.
+A broker is not the source of truth for accepting a ride. Booking state and the outbox event commit atomically in the transactional database. Kafka publishing is introduced only after the outbox has lease, retry, replay, and failure tests.
+
+### ADR-007 — At-least-once publication, idempotent consumption
+
+The outbox will be published with at-least-once delivery semantics. Consumers must therefore use stable event IDs and make side effects replay-safe instead of depending on exactly-once network delivery.
 
 ## Near-term target architecture
 
-1. Transactional outbox written in the same transaction as ride booking state.
-2. Publisher lease/retry strategy with explicit delivery semantics and replay tests.
-3. Kafka publisher and replay-safe driver-matching consumer.
-4. Redis for hot read paths and geospatial driver availability.
-5. OpenTelemetry traces, Prometheus metrics, structured logs, and SLO dashboards.
-6. Authentication/authorization boundaries for customer, driver, restaurant, and operations roles.
-7. Persisted quote/pricing snapshots and payment authorization boundaries.
-8. PostgreSQL HA/backup configuration and staged deployment manifests.
+1. Leased outbox publisher with retry/backoff, explicit failure states, and metrics.
+2. Kafka publisher and replay-safe driver-matching consumer.
+3. Redis for hot read paths and geospatial driver availability.
+4. OpenTelemetry traces, Prometheus metrics, structured logs, and SLO dashboards.
+5. Authentication/authorization boundaries for customer, driver, restaurant, and operations roles.
+6. Persisted quote/pricing snapshots and payment authorization boundaries.
+7. PostgreSQL HA/backup configuration and staged deployment manifests.
