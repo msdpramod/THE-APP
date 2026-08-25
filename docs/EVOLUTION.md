@@ -1,5 +1,32 @@
 # Evolution Log
 
+## Foundation 005
+
+### Added
+
+- Flyway-managed `outbox_event` table with publishable and aggregate indexes.
+- Atomic `RideRequested` event persistence in the same Spring transaction as a newly accepted ride booking.
+- JSON event payload containing booking ID, rider, pickup/dropoff, and request timestamp.
+- Replay protection: retrying the same idempotent booking does not append a second outbox event.
+- Full application test coverage asserting exactly one `RideRequested` event exists for a booking across an HTTP replay.
+- PostgreSQL-compatible outbox migration and an explicit at-least-once publication/idempotent-consumer architecture decision.
+
+### Why this shape
+
+Writing a booking and publishing directly to Kafka would create a dual-write failure mode: the database could commit while Kafka fails, leaving a valid ride that is never matched. Foundation 005 records the integration event inside the same transactional boundary as the booking. A later publisher can retry delivery independently without losing accepted work.
+
+### Known risks / gaps
+
+- No outbox publisher exists yet, so events remain `PENDING` in the database.
+- Lease ownership, retry/backoff, poison-event handling, retention, and publisher metrics are not implemented yet.
+- Kafka and the driver-matching consumer are intentionally not connected until replay behavior is test-covered.
+- Authentication/authorization and persisted pricing snapshots remain absent.
+- Production PostgreSQL HA, connection-pool sizing, backups, encryption, and migration rollout are not deployment-tested.
+
+### Next evolution target
+
+Implement a leased outbox publisher with bounded batches, `SKIP LOCKED` semantics for PostgreSQL, retry/backoff, explicit terminal failure handling, and Micrometer metrics. Test crash/replay behavior before adding Kafka. After that, publish stable event IDs to Kafka and make driver matching idempotent by event ID.
+
 ## Foundation 004
 
 ### Added
@@ -20,13 +47,8 @@ The previous in-memory idempotency maps were correct only inside one JVM. That i
 
 - The default developer database is file-backed H2 for zero-dependency local startup; production must provide PostgreSQL connection settings through `THE_APP_DB_*` environment variables.
 - Booking creation still does not persist the ride quote or pricing snapshot.
-- There is no transactional outbox yet, so no durable `RideRequested` event is emitted.
 - Authentication and authorization are still absent; `riderId` remains caller-provided demonstration data.
 - Database connection-pool sizing, production migrations, backup/restore, encryption, and HA settings are not yet deployment-tested.
-
-### Next evolution target
-
-Add a transactional outbox table and write a `RideRequested` event in the same database transaction as the booking. Add a publisher lease/retry strategy and replay tests before connecting Kafka. This creates an auditable, loss-resistant boundary between synchronous booking and asynchronous driver matching.
 
 ## Foundation 003
 
@@ -41,19 +63,6 @@ Add a transactional outbox table and write a `RideRequested` event in the same d
 
 Idempotency is only safe when a retry key is bound to the original operation. Returning a previous booking for a materially different request can attach the wrong trip to a caller and becomes especially dangerous once pricing, payment authorization, and driver matching are introduced. Foundation 003 closes that correctness gap before durable persistence and asynchronous processing.
 
-### Known risks / gaps
-
-- Booking and idempotency state are still process-local and disappear on restart.
-- Multiple application instances still do not share idempotency state.
-- The request comparison is an in-memory structural comparison; durable storage will persist a canonical request fingerprint alongside the idempotency record.
-- `riderId` is still a demonstration identifier because authentication is not implemented yet.
-- Booking creation does not yet bind to a persisted quote or pricing snapshot.
-- No driver matching event is emitted yet.
-
-### Next evolution target
-
-Move booking state and idempotency records into PostgreSQL with Flyway migrations. Persist a canonical request fingerprint, booking, and outbox event in one database transaction. Kafka can then publish replay-safe ride-requested events for asynchronous driver matching without weakening the HTTP contract.
-
 ## Foundation 002
 
 ### Added
@@ -64,16 +73,6 @@ Move booking state and idempotency records into PostgreSQL with Flyway migration
 - Explicit ride lifecycle states: `REQUESTED`, `MATCHING`, `DRIVER_ASSIGNED`, `DRIVER_ARRIVING`, `IN_PROGRESS`, `COMPLETED`, `CANCELLED`.
 - MVC tests covering booking creation, duplicate retry behavior, missing idempotency key, and unknown booking lookup.
 - Customer UI flow that turns a quote into a ride request and safely reuses the same idempotency key on retry.
-
-### Why this shape
-
-Mutation safety is more important than adding Kafka prematurely. A ride request is a money- and state-sensitive operation, so THE APP establishes an idempotent HTTP contract before durable storage or asynchronous matching. The API behavior and tests are the durable part of this increment.
-
-### Known risks / gaps
-
-- `riderId` is still a demonstration identifier because authentication is not implemented yet.
-- Booking creation does not yet bind to a persisted quote or pricing snapshot.
-- No driver matching event is emitted yet.
 
 ## Foundation 001
 
@@ -89,7 +88,3 @@ Mutation safety is more important than adding Kafka prematurely. A ride request 
 - GitHub Actions verification gates for backend and frontend syntax.
 - Non-root backend Docker image.
 - Architecture decisions and extraction criteria.
-
-### Why this shape
-
-The repository started empty. The first evolution established a runnable vertical slice and review gates before introducing databases, Kafka, Redis, auth, or service decomposition. This keeps later evolution measurable and reversible.
