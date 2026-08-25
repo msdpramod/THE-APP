@@ -3,7 +3,7 @@ CREATE TABLE outbox_event (
     aggregate_type VARCHAR(64) NOT NULL,
     aggregate_id VARCHAR(64) NOT NULL,
     event_type VARCHAR(128) NOT NULL,
-    payload CLOB NOT NULL,
+    payload TEXT NOT NULL,
     status VARCHAR(32) NOT NULL DEFAULT 'PENDING',
     attempts INTEGER NOT NULL DEFAULT 0,
     available_at TIMESTAMP NOT NULL,
