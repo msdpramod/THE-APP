@@ -1,5 +1,7 @@
 package io.theapp.platform.ride;
 
+import com.fasterxml.jackson.core.JsonProcessingException;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import org.springframework.dao.DuplicateKeyException;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Service;
@@ -20,9 +22,11 @@ import java.util.UUID;
 public class RideBookingStore {
 
     private final JdbcTemplate jdbcTemplate;
+    private final ObjectMapper objectMapper;
 
-    public RideBookingStore(JdbcTemplate jdbcTemplate) {
+    public RideBookingStore(JdbcTemplate jdbcTemplate, ObjectMapper objectMapper) {
         this.jdbcTemplate = jdbcTemplate;
+        this.objectMapper = objectMapper;
     }
 
     @Transactional
@@ -54,6 +58,8 @@ public class RideBookingStore {
                     booking.pickup().label(), booking.pickup().latitude(), booking.pickup().longitude(),
                     booking.dropoff().label(), booking.dropoff().latitude(), booking.dropoff().longitude(),
                     booking.status().name(), Timestamp.from(booking.createdAt()));
+
+            persistRideRequestedEvent(booking);
             return CreateResult.created(booking);
         } catch (DuplicateKeyException race) {
             StoredBooking winner = findByIdempotencyKey(idempotencyKey).orElseThrow(() -> race);
@@ -72,6 +78,36 @@ public class RideBookingStore {
         return jdbcTemplate.query("SELECT * FROM ride_booking WHERE idempotency_key = ?", this::mapStoredBooking, idempotencyKey)
                 .stream()
                 .findFirst();
+    }
+
+    private void persistRideRequestedEvent(RideBookingController.RideBookingResponse booking) {
+        Instant now = Instant.now();
+        RideRequestedEvent payload = new RideRequestedEvent(
+                booking.bookingId(), booking.riderId(), booking.pickup(), booking.dropoff(), booking.createdAt());
+
+        jdbcTemplate.update("""
+                INSERT INTO outbox_event (
+                    event_id, aggregate_type, aggregate_id, event_type, payload,
+                    status, attempts, available_at, created_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                UUID.randomUUID().toString(),
+                "RIDE_BOOKING",
+                booking.bookingId(),
+                "RideRequested",
+                toJson(payload),
+                "PENDING",
+                0,
+                Timestamp.from(now),
+                Timestamp.from(now));
+    }
+
+    private String toJson(RideRequestedEvent event) {
+        try {
+            return objectMapper.writeValueAsString(event);
+        } catch (JsonProcessingException e) {
+            throw new IllegalStateException("Unable to serialize RideRequested outbox event", e);
+        }
     }
 
     private CreateResult replayOrConflict(StoredBooking existing, String fingerprint) {
@@ -118,6 +154,13 @@ public class RideBookingStore {
     }
 
     private record StoredBooking(RideBookingController.RideBookingResponse booking, String fingerprint) {}
+
+    private record RideRequestedEvent(
+            String bookingId,
+            String riderId,
+            RideBookingController.GeoPoint pickup,
+            RideBookingController.GeoPoint dropoff,
+            Instant requestedAt) {}
 
     public record CreateResult(RideBookingController.RideBookingResponse booking, Outcome outcome) {
         public static CreateResult created(RideBookingController.RideBookingResponse booking) {
