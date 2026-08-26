@@ -7,17 +7,19 @@
 - Migrated transactional outbox serialization from Jackson 2 (`com.fasterxml.jackson`) types to Spring Boot 4.1's default Jackson 3 (`tools.jackson`) stack.
 - `RideBookingStore` now depends on the auto-configured `JsonMapper` bean and catches Jackson 3's `JacksonException`.
 - Added the focused `spring-boot-starter-webmvc-test` test dependency required by Spring Boot 4.1 for `@WebMvcTest` and `@AutoConfigureMockMvc`.
+- Replaced the bare Flyway core dependency with Spring Boot 4.1's `spring-boot-starter-flyway`, restoring Boot's Flyway auto-configuration so migrations execute before JDBC-backed booking tests.
+- Added cascaded `@Valid` markers to nested ride quote pickup/dropoff points so latitude/longitude constraints are actually enforced at the HTTP boundary.
 - Kept the ride booking HTTP contract, idempotency behavior, database schema, and outbox payload unchanged.
 
 ### Why this shape
 
-The Foundation 005 CI run exposed a backend verification failure while the frontend gate remained green. The first repair aligned outbox serialization with Jackson 3. The next CI pass proved application compilation succeeded and isolated the remaining failure to MVC test annotations whose focused Spring Boot 4 test module was missing. Adding that module preserves the existing test strategy instead of weakening the gate.
+The Foundation 005 CI run exposed a chain of Spring Boot 4 migration gaps rather than a reason to weaken the tests. First, outbox serialization still used Jackson 2 APIs. Once that compiled, CI exposed the missing focused MVC test module. Once tests compiled, execution exposed that Flyway's Boot 4 auto-configuration module was absent and that nested request records were not being cascaded through Bean Validation. Foundation 006 repairs each framework boundary while preserving the existing product contract.
 
 ### Risk posture
 
-- This is intentionally a narrow compatibility repair rather than another architectural expansion.
+- This remains a compatibility and correctness repair rather than another distributed-systems expansion.
 - No Kafka, scheduler, lease, retry, or status-transition code is added until the corrected backend passes CI.
-- JSON payload semantics and public HTTP behavior remain unchanged.
+- JSON payload semantics and public HTTP behavior remain unchanged except that invalid nested coordinates now correctly return a client error as originally documented and tested.
 - The build gate is authoritative and the PR remains draft until verification succeeds.
 
 ### Next evolution target
