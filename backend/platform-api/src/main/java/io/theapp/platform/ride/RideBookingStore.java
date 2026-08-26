@@ -1,7 +1,7 @@
 package io.theapp.platform.ride;
 
-import com.fasterxml.jackson.core.JsonProcessingException;
-import com.fasterxml.jackson.databind.ObjectMapper;
+import tools.jackson.core.JacksonException;
+import tools.jackson.databind.json.JsonMapper;
 import org.springframework.dao.DuplicateKeyException;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Service;
@@ -22,11 +22,11 @@ import java.util.UUID;
 public class RideBookingStore {
 
     private final JdbcTemplate jdbcTemplate;
-    private final ObjectMapper objectMapper;
+    private final JsonMapper jsonMapper;
 
-    public RideBookingStore(JdbcTemplate jdbcTemplate, ObjectMapper objectMapper) {
+    public RideBookingStore(JdbcTemplate jdbcTemplate, JsonMapper jsonMapper) {
         this.jdbcTemplate = jdbcTemplate;
-        this.objectMapper = objectMapper;
+        this.jsonMapper = jsonMapper;
     }
 
     @Transactional
@@ -104,8 +104,8 @@ public class RideBookingStore {
 
     private String toJson(RideRequestedEvent event) {
         try {
-            return objectMapper.writeValueAsString(event);
-        } catch (JsonProcessingException e) {
+            return jsonMapper.writeValueAsString(event);
+        } catch (JacksonException e) {
             throw new IllegalStateException("Unable to serialize RideRequested outbox event", e);
         }
     }
