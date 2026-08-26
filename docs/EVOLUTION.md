@@ -6,17 +6,19 @@
 
 - Migrated transactional outbox serialization from Jackson 2 (`com.fasterxml.jackson`) types to Spring Boot 4.1's default Jackson 3 (`tools.jackson`) stack.
 - `RideBookingStore` now depends on the auto-configured `JsonMapper` bean and catches Jackson 3's `JacksonException`.
+- Added the focused `spring-boot-starter-webmvc-test` test dependency required by Spring Boot 4.1 for `@WebMvcTest` and `@AutoConfigureMockMvc`.
 - Kept the ride booking HTTP contract, idempotency behavior, database schema, and outbox payload unchanged.
 
 ### Why this shape
 
-The Foundation 005 CI run exposed a backend verification failure while the frontend gate remained green. Spring Boot 4 uses Jackson 3 as its preferred/default JSON implementation, so keeping direct Jackson 2 imports in the outbox serialization path creates an avoidable dependency/API mismatch. This repair restores alignment with the framework before adding the leased publisher.
+The Foundation 005 CI run exposed a backend verification failure while the frontend gate remained green. The first repair aligned outbox serialization with Jackson 3. The next CI pass proved application compilation succeeded and isolated the remaining failure to MVC test annotations whose focused Spring Boot 4 test module was missing. Adding that module preserves the existing test strategy instead of weakening the gate.
 
 ### Risk posture
 
 - This is intentionally a narrow compatibility repair rather than another architectural expansion.
 - No Kafka, scheduler, lease, retry, or status-transition code is added until the corrected backend passes CI.
-- JSON payload semantics should remain equivalent, but the build gate is authoritative and the PR remains draft until verification succeeds.
+- JSON payload semantics and public HTTP behavior remain unchanged.
+- The build gate is authoritative and the PR remains draft until verification succeeds.
 
 ### Next evolution target
 
