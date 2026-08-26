@@ -51,7 +51,7 @@ public class RideQuoteController {
         return earthRadiusKm * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
     }
 
-    public record RideQuoteRequest(@NotNull GeoPoint pickup, @NotNull GeoPoint dropoff) {}
+    public record RideQuoteRequest(@NotNull @Valid GeoPoint pickup, @NotNull @Valid GeoPoint dropoff) {}
 
     public record GeoPoint(
             @NotBlank String label,
