@@ -54,7 +54,7 @@ class OutboxLeaseStoreTest {
     @Test
     void failedDeliveryReturnsToPendingWithBackoffThenBecomesTerminal() {
         String eventId = insertPendingEvent();
-        OutboxEvent firstAttempt = leaseStore.claimBatch("worker-a", 1, Duration.ofSeconds(30)).getFirst();
+        OutboxEvent firstAttempt = leaseStore.claimBatch("worker-a", 1, Duration.ofSeconds(30)).get(0);
 
         leaseStore.markFailed(firstAttempt, "worker-a", 2, Duration.ofMillis(1), new IllegalStateException("broker unavailable"));
 
@@ -63,7 +63,7 @@ class OutboxLeaseStoreTest {
         assertThat(attempts).isEqualTo(1);
 
         jdbcTemplate.update("UPDATE outbox_event SET available_at = ? WHERE event_id = ?", Timestamp.from(Instant.EPOCH), eventId);
-        OutboxEvent secondAttempt = leaseStore.claimBatch("worker-b", 1, Duration.ofSeconds(30)).getFirst();
+        OutboxEvent secondAttempt = leaseStore.claimBatch("worker-b", 1, Duration.ofSeconds(30)).get(0);
         leaseStore.markFailed(secondAttempt, "worker-b", 2, Duration.ofMillis(1), new IllegalStateException("still unavailable"));
 
         assertThat(status(eventId)).isEqualTo("FAILED");
