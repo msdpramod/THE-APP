@@ -1,12 +1,12 @@
 # THE APP Architecture
 
-## Current stage: Foundation 005
+## Current stage: Foundation 007
 
 THE APP is a modular Spring Boot platform API plus a lightweight customer web shell. Domain contracts, tests, observability, durable mutation semantics, and deployment boundaries are established before services are split across the network.
 
 ## Product domains
 
-- **Ride:** quoting plus durable, retry-safe booking and transactional `RideRequested` outbox now; publishing, driver matching, trip lifecycle, live location, surge pricing, and settlement next.
+- **Ride:** quoting, durable retry-safe booking, transactional `RideRequested` capture, and leased outbox dispatch infrastructure now; Kafka publication, driver matching, trip lifecycle, live location, surge pricing, and settlement next.
 - **Food:** restaurant discovery now; catalog, cart, ordering, kitchen workflow, delivery matching, and settlement next.
 - **Shared platform:** identity, payments, wallet, notifications, risk, experimentation, and observability will be introduced behind stable contracts.
 
@@ -21,16 +21,16 @@ Domain APIs  ---- Redis / geo cache
     |
 Transactional stores
     |
-Outbox / CDC -> Kafka -> async domain consumers
-                         |-> matching
-                         |-> notifications
-                         |-> payments
-                         |-> analytics
+Outbox lease workers -> delivery gateway -> Kafka -> async domain consumers
+                                             |-> matching
+                                             |-> notifications
+                                             |-> payments
+                                             |-> analytics
 ```
 
-The current codebase does **not** claim million-TPS throughput. It creates the seams required to scale safely: versioned APIs, explicit validation, bounded domains, durable idempotent mutation contracts, transactional event capture, health probes, CI gates, and evolution documentation.
+The current codebase does **not** claim million-TPS throughput. It creates the seams required to scale safely: versioned APIs, explicit validation, bounded domains, durable idempotent mutation contracts, transactional event capture, lease-based bounded dispatch, health probes, metrics, CI gates, and evolution documentation.
 
-## Ride booking boundary
+## Ride booking and outbox boundary
 
 ```text
 Customer UI
@@ -46,13 +46,23 @@ Database transaction
    |-- INSERT ride_booking
    `-- INSERT outbox_event(RideRequested, PENDING)
           |
-          `-- future leased publisher -> Kafka -> matching
+          | claim bounded batch
+          | FOR UPDATE SKIP LOCKED
+          | status -> IN_FLIGHT + lease owner/expiry
+          v
+     delivery gateway
+          |
+          | success -> PUBLISHED
+          ` failure -> PENDING + exponential backoff
+                       or FAILED after max attempts
 
 same key + same fingerprint -> persisted booking, no second event
 same key + other fingerprint -> 409 Conflict
 ```
 
-Foundation 005 closes the dual-write gap between accepting a ride and recording the event that will eventually trigger asynchronous matching. A newly accepted booking and its `RideRequested` outbox row are persisted in the same Spring transaction. If either write fails, neither should commit. Replays of the same idempotency key return the existing booking and do not append another event.
+Foundation 007 adds worker-safe outbox leasing without pretending a broker is already integrated. Claiming is bounded and transactionally locked with `FOR UPDATE SKIP LOCKED`, ownership is persisted, stale work can become claimable after lease expiry, delivery failures back off exponentially, poison events become terminal `FAILED`, and Micrometer counters track claims, publishes, retries, and terminal failures.
+
+The scheduled publisher is **disabled by default**. Enabling it requires a real `OutboxDeliveryGateway` implementation. This prevents development or production from silently marking events delivered before Kafka or another durable transport exists.
 
 The default developer database remains file-backed H2 in PostgreSQL compatibility mode for zero-dependency startup. Production deployments are expected to supply PostgreSQL connection settings with environment variables. Flyway owns schema evolution so the same migration history travels with each environment.
 
@@ -60,12 +70,7 @@ The default developer database remains file-backed H2 in PostgreSQL compatibilit
 
 ### ADR-001 — Start modular, extract by pressure
 
-Starting with many empty microservices would increase deployment, tracing, schema, and failure complexity without useful load. We will extract a domain into an independently deployable service when at least one of these becomes true:
-
-1. independent scaling is required;
-2. a separate availability/SLO boundary is required;
-3. team ownership justifies independent release cadence;
-4. data consistency or workload characteristics demand isolation.
+Starting with many empty microservices would increase deployment, tracing, schema, and failure complexity without useful load. Extract a domain only when independent scaling, an SLO boundary, ownership, or data/workload isolation justifies it.
 
 ### ADR-002 — API versioning from day one
 
@@ -85,18 +90,22 @@ Retry-sensitive mutation APIs require an idempotency contract before events, pay
 
 ### ADR-006 — Database before broker
 
-A broker is not the source of truth for accepting a ride. Booking state and the outbox event commit atomically in the transactional database. Kafka publishing is introduced only after the outbox has lease, retry, replay, and failure tests.
+A broker is not the source of truth for accepting a ride. Booking state and the outbox event commit atomically in the transactional database.
 
 ### ADR-007 — At-least-once publication, idempotent consumption
 
-The outbox will be published with at-least-once delivery semantics. Consumers must therefore use stable event IDs and make side effects replay-safe instead of depending on exactly-once network delivery.
+Outbox delivery uses at-least-once semantics. Consumers must use stable event IDs and make side effects replay-safe rather than depending on exactly-once network delivery.
+
+### ADR-008 — Lease before transport
+
+Outbox workers claim bounded batches with database locks and explicit lease ownership before a broker adapter is added. Delivery is pluggable behind `OutboxDeliveryGateway`, and the scheduler remains disabled until a durable transport implementation exists.
 
 ## Near-term target architecture
 
-1. Leased outbox publisher with retry/backoff, explicit failure states, and metrics.
-2. Kafka publisher and replay-safe driver-matching consumer.
+1. Kafka `OutboxDeliveryGateway` with stable event IDs and topic contracts.
+2. Replay-safe driver-matching consumer with an inbox/deduplication table.
 3. Redis for hot read paths and geospatial driver availability.
 4. OpenTelemetry traces, Prometheus metrics, structured logs, and SLO dashboards.
 5. Authentication/authorization boundaries for customer, driver, restaurant, and operations roles.
 6. Persisted quote/pricing snapshots and payment authorization boundaries.
-7. PostgreSQL HA/backup configuration and staged deployment manifests.
+7. PostgreSQL HA/backup configuration, connection-pool sizing, and staged deployment manifests.
