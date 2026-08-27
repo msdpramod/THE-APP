@@ -27,6 +27,16 @@ management:
       probes:
         enabled: true
 
+the-app:
+  outbox:
+    publisher:
+      enabled: ${THE_APP_OUTBOX_PUBLISHER_ENABLED:false}
+      poll-delay-ms: ${THE_APP_OUTBOX_POLL_DELAY_MS:1000}
+      batch-size: ${THE_APP_OUTBOX_BATCH_SIZE:50}
+      lease-seconds: ${THE_APP_OUTBOX_LEASE_SECONDS:30}
+      max-attempts: ${THE_APP_OUTBOX_MAX_ATTEMPTS:8}
+      base-backoff-seconds: ${THE_APP_OUTBOX_BASE_BACKOFF_SECONDS:2}
+
 info:
   app:
     name: THE APP Platform API
