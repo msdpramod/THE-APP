@@ -1,5 +1,35 @@
 # Evolution Log
 
+## Foundation 007
+
+### Added
+
+- Flyway migration for outbox lease ownership, lease expiry, and bounded last-error diagnostics.
+- `OutboxLeaseStore` with bounded `FOR UPDATE SKIP LOCKED` claims so multiple workers can divide ready work without processing the same row concurrently.
+- Explicit `IN_FLIGHT`, `PUBLISHED`, retryable `PENDING`, and terminal `FAILED` transitions guarded by lease ownership.
+- Exponential retry backoff with a configurable maximum-attempt policy.
+- Micrometer counters for claimed, published, retried, and terminally failed events.
+- `OutboxDeliveryGateway` transport boundary plus a scheduled publisher that remains disabled by default until a durable gateway such as Kafka is supplied.
+- Integration coverage for bounded claims, lease-owner protection, retry, and poison-event terminal failure.
+
+### Why this shape
+
+Foundation 006 restored a green build, so the next highest-value step is making the transactional outbox safe to run concurrently before introducing Kafka. The database remains the coordination point: workers lock a bounded set of ready rows, persist lease ownership, and perform delivery outside the claim transaction. Success and failure updates are accepted only from the worker that owns the lease.
+
+The scheduler is intentionally disabled by default. There is no fake logging transport that marks an event delivered. Enabling publication without a real `OutboxDeliveryGateway` should fail configuration rather than lose work silently.
+
+### Risk posture
+
+- Publication remains at-least-once. A process can deliver an event and crash before marking it `PUBLISHED`; the eventual Kafka consumer must therefore deduplicate by stable event ID.
+- `FOR UPDATE SKIP LOCKED` is chosen for PostgreSQL production semantics and is exercised through H2 PostgreSQL compatibility mode in CI; production PostgreSQL concurrency/load testing is still required.
+- Retry backoff is bounded exponentially, but jitter and operational re-drive tooling are not yet implemented.
+- Terminal `FAILED` events require future alerting and an operator re-drive path.
+- Authentication, pricing snapshots, payments, geospatial matching, distributed tracing, and production HA remain outside this increment.
+
+### Next evolution target
+
+Implement a Kafka-backed `OutboxDeliveryGateway` that publishes the stable outbox `event_id` as the message identity, define topic/versioning conventions, and add a replay-safe driver-matching consumer with an inbox/deduplication table. Add broker integration tests before enabling the scheduled publisher in a deployment profile.
+
 ## Foundation 006
 
 ### Fixed
@@ -8,7 +38,7 @@
 - `RideBookingStore` now depends on the auto-configured `JsonMapper` bean and catches Jackson 3's `JacksonException`.
 - Added the focused `spring-boot-starter-webmvc-test` test dependency required by Spring Boot 4.1 for `@WebMvcTest` and `@AutoConfigureMockMvc`.
 - Replaced the bare Flyway core dependency with Spring Boot 4.1's `spring-boot-starter-flyway`, restoring Boot's Flyway auto-configuration so migrations execute before JDBC-backed booking tests.
-- Added cascaded `@Valid` markers to nested ride quote pickup/dropoff points so latitude/longitude constraints are actually enforced at the HTTP boundary.
+- Added cascaded `@Valid` markers to nested ride quote pickup/dropoff points so coordinate constraints are actually enforced at the HTTP boundary.
 - Kept the ride booking HTTP contract, idempotency behavior, database schema, and outbox payload unchanged.
 
 ### Why this shape
