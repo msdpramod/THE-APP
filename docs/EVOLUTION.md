@@ -1,5 +1,36 @@
 # Evolution Log
 
+## Foundation 008
+
+### Added
+
+- Spring Boot 4.1 Kafka starter using the framework-managed Spring Kafka generation.
+- Kafka-backed `OutboxDeliveryGateway` for `RideRequested` events.
+- Versioned `ride.requested.v1` topic mapping with ride aggregate ID as the Kafka record key.
+- Stable `event-id`, `event-type`, and `aggregate-type` Kafka headers for downstream replay handling and diagnostics.
+- Producer defaults of `acks=all` and idempotence enabled.
+- Bounded acknowledgement wait so outbox rows are marked `PUBLISHED` only after Kafka confirms the send.
+- Unit coverage for topic/key/header mapping and fail-closed handling of unknown event types.
+- Environment-driven Kafka bootstrap server, topic, transport, and send-timeout configuration.
+
+### Why this shape
+
+Foundation 007 established safe leasing and replayable publication semantics and CI is green. Foundation 008 connects Kafka only through that existing transport boundary. The database remains the source of truth; Kafka publication is a delivery step, not part of booking acceptance.
+
+The publisher and transport remain disabled by default. This is deliberate: the first side-effecting consumer does not yet have a durable inbox/deduplication table, so enabling end-to-end asynchronous matching today would create a correctness gap. Unknown event types also fail closed rather than drifting into an unversioned catch-all topic.
+
+### Risk posture
+
+- Kafka delivery is still at-least-once. Producer idempotence does not eliminate the publish-success/process-crash/outbox-replay window.
+- No side-effecting Kafka consumer is enabled yet; downstream consumers must deduplicate using the stable `event-id` header.
+- The new gateway is covered without requiring a broker in unit CI; broker-level compatibility, retries, restart behavior, and topic provisioning still need integration tests.
+- Topic creation/retention/partition count are deployment concerns and are not auto-created by the application in this increment.
+- Authentication, ACLs, TLS/SASL, schema registry, geospatial matching, payments, and distributed tracing remain future work.
+
+### Next evolution target
+
+Add a replay-safe driver-matching consumer with a Flyway-managed inbox table keyed by `event-id`, atomically persist inbox acceptance with the initial matching state, and cover duplicate delivery/restart behavior. Then add broker integration tests before turning on the publisher in a deployment profile.
+
 ## Foundation 007
 
 ### Added
