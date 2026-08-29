@@ -34,7 +34,7 @@ public class RideRequestedKafkaConsumer {
         DriverMatchingInboxStore.RideRequestedMessage message =
                 jsonMapper.readValue(record.value(), DriverMatchingInboxStore.RideRequestedMessage.class);
 
-        if (!record.key().equals(message.bookingId())) {
+        if (record.key() == null || !record.key().equals(message.bookingId())) {
             throw new IllegalArgumentException("Kafka key must match RideRequested bookingId");
         }
 
