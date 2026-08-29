@@ -1,12 +1,12 @@
 # THE APP Architecture
 
-## Current stage: Foundation 008
+## Current stage: Foundation 009
 
 THE APP is a modular Spring Boot platform API plus a lightweight customer web shell. Domain contracts, tests, observability, durable mutation semantics, and deployment boundaries are established before services are split across the network.
 
 ## Product domains
 
-- **Ride:** quoting, durable retry-safe booking, transactional `RideRequested` capture, leased outbox dispatch, and an acknowledged Kafka transport adapter now; replay-safe driver matching, trip lifecycle, live location, surge pricing, and settlement next.
+- **Ride:** quoting, durable retry-safe booking, transactional `RideRequested` capture, leased outbox dispatch, acknowledged Kafka transport, and replay-safe driver-matching intake now; actual driver selection, trip lifecycle, live location, surge pricing, and settlement next.
 - **Food:** restaurant discovery now; catalog, cart, ordering, kitchen workflow, delivery matching, and settlement next.
 - **Shared platform:** identity, payments, wallet, notifications, risk, experimentation, and observability will be introduced behind stable contracts.
 
@@ -22,15 +22,18 @@ Domain APIs  ---- Redis / geo cache
 Transactional stores
     |
 Outbox lease workers -> Kafka gateway -> Kafka -> async domain consumers
-                                          |-> matching
-                                          |-> notifications
-                                          |-> payments
-                                          |-> analytics
+                                          |
+                                          | RideRequested
+                                          v
+                                   transactional inbox
+                                          |
+                                          v
+                                  matching request state
 ```
 
-The current codebase does **not** claim million-TPS throughput. It creates the seams required to scale safely: versioned APIs, explicit validation, bounded domains, durable idempotent mutation contracts, transactional event capture, lease-based bounded dispatch, acknowledged broker publication, health probes, metrics, CI gates, and evolution documentation.
+The current codebase does **not** claim million-TPS throughput. It creates the seams required to scale safely: versioned APIs, explicit validation, durable idempotent mutation contracts, transactional event capture, lease-based bounded dispatch, acknowledged broker publication, replay-safe consumer intake, health probes, metrics, CI gates, and evolution documentation.
 
-## Ride booking and outbox boundary
+## Ride booking, outbox, and inbox boundary
 
 ```text
 Customer UI
@@ -46,31 +49,34 @@ Database transaction
    |-- INSERT ride_booking
    `-- INSERT outbox_event(RideRequested, PENDING)
           |
-          | claim bounded batch
-          | FOR UPDATE SKIP LOCKED
-          | status -> IN_FLIGHT + lease owner/expiry
+          | claim bounded batch / lease
           v
      Kafka gateway
           |
-          | producer acks=all + send acknowledgement
-          | key = aggregate/ride id
+          | acks=all + producer idempotence
+          | key = booking id
           | headers: event-id, event-type, aggregate-type
           v
         Kafka
           |
-          | success -> PUBLISHED
-          ` failure -> PENDING + exponential backoff
-                       or FAILED after max attempts
+          | at-least-once delivery
+          v
+RideRequested consumer
+          |
+          | validate required headers + topic key
+          v
+Consumer database transaction
+   |-- INSERT consumer_inbox(event-id) ON CONFLICT DO NOTHING
+   `-- INSERT driver_matching_request(..., PENDING) only for first delivery
 
-same key + same fingerprint -> persisted booking, no second event
-same key + other fingerprint -> 409 Conflict
+same event-id replay -> no second matching request
 ```
 
-Foundation 008 adds a real Kafka-backed `OutboxDeliveryGateway` without enabling publication by default. `RideRequested` maps to versioned topic `ride.requested.v1`, the ride aggregate ID is the record key to preserve per-ride ordering within Kafka partitions, and the stable outbox event ID is carried as an `event-id` header for downstream deduplication. The gateway waits for the Kafka send acknowledgement before allowing the outbox row to transition to `PUBLISHED`.
+Foundation 009 closes the first consumer-side replay gap. The driver-matching consumer is keyed by the stable `event-id` header and atomically records inbox acceptance with initialization of durable matching state. Duplicate delivery becomes a no-op before any later driver-assignment side effect is allowed.
 
-Producer configuration defaults to `acks=all` with idempotence enabled. These settings reduce producer-side duplication and data-loss windows but **do not** replace consumer idempotency: a process can still publish successfully and crash before updating the outbox row, causing a later replay. Every side-effecting consumer must therefore deduplicate by stable event ID.
+The Kafka key must match the `RideRequested.bookingId`, and unexpected event types or missing required headers fail closed. This protects per-ride ordering assumptions and prevents malformed records from silently creating matching state.
 
-The publisher and Kafka transport remain opt-in (`THE_APP_OUTBOX_PUBLISHER_ENABLED=true` and `THE_APP_OUTBOX_TRANSPORT=kafka`). They should not be enabled in a deployment until broker connectivity and the first consumer's inbox/deduplication path are integration-tested.
+The publisher, Kafka transport, and matching consumer remain opt-in. `THE_APP_OUTBOX_PUBLISHER_ENABLED=true`, `THE_APP_OUTBOX_TRANSPORT=kafka`, and `THE_APP_MATCHING_CONSUMER_ENABLED=true` should only be enabled together in a deployment after broker-level integration tests verify publish acknowledgement, duplicate redelivery, restart behavior, and poison-message handling.
 
 The default developer database remains file-backed H2 in PostgreSQL compatibility mode for zero-dependency startup. Production deployments are expected to supply PostgreSQL connection settings with environment variables. Flyway owns schema evolution so the same migration history travels with each environment.
 
@@ -90,7 +96,7 @@ Development CORS is restricted to known localhost origins. Production origins mu
 
 ### ADR-004 — Test before extraction
 
-Every domain receives contract/controller tests before asynchronous messaging or service extraction. Future Kafka flows must include idempotency and replay tests.
+Every domain receives contract/controller tests before asynchronous messaging or service extraction. Kafka flows require idempotency and replay tests.
 
 ### ADR-005 — Idempotency before asynchronous mutation
 
@@ -102,22 +108,26 @@ A broker is not the source of truth for accepting a ride. Booking state and the 
 
 ### ADR-007 — At-least-once publication, idempotent consumption
 
-Outbox delivery uses at-least-once semantics. Consumers must use stable event IDs and make side effects replay-safe rather than depending on exactly-once network delivery.
+Outbox delivery uses at-least-once semantics. Consumers use stable event IDs and make side effects replay-safe rather than depending on exactly-once network delivery.
 
 ### ADR-008 — Lease before transport
 
-Outbox workers claim bounded batches with database locks and explicit lease ownership before a broker adapter is added. Delivery is pluggable behind `OutboxDeliveryGateway`.
+Outbox workers claim bounded batches with database locks and explicit lease ownership before broker delivery. Delivery is pluggable behind `OutboxDeliveryGateway`.
 
 ### ADR-009 — Acknowledged, versioned Kafka publication
 
-Outbox rows are marked `PUBLISHED` only after Kafka acknowledges the send. Event families map to explicit versioned topics, aggregate IDs are stable Kafka keys, and event IDs travel as headers so consumers can deduplicate replayed delivery. Unknown event types fail closed instead of being routed to a catch-all topic.
+Outbox rows are marked `PUBLISHED` only after Kafka acknowledges the send. Event families map to explicit versioned topics, aggregate IDs are stable Kafka keys, and event IDs travel as headers. Unknown event types fail closed.
+
+### ADR-010 — Transactional inbox before matching side effects
+
+Every side-effecting Kafka consumer first persists the stable event ID in a transactional inbox. The first `RideRequested` delivery atomically creates a durable `PENDING` matching request; replayed deliveries do not repeat that initialization. Driver assignment must build on this boundary rather than consume Kafka directly without deduplication.
 
 ## Near-term target architecture
 
-1. Replay-safe driver-matching consumer with a transactional inbox/deduplication table keyed by `event-id`.
-2. Broker integration tests covering acknowledged publish, duplicate redelivery, consumer restart, and poison messages before enabling publication in deployment profiles.
-3. Redis for hot read paths and geospatial driver availability.
-4. OpenTelemetry traces, Prometheus metrics, structured logs, and SLO dashboards.
-5. Authentication/authorization boundaries for customer, driver, restaurant, and operations roles.
-6. Persisted quote/pricing snapshots and payment authorization boundaries.
-7. PostgreSQL HA/backup configuration, connection-pool sizing, and staged deployment manifests.
+1. Broker integration tests covering acknowledged publish, duplicate redelivery, consumer restart, malformed events, and poison messages.
+2. Driver availability and geospatial candidate lookup, likely Redis-backed, with deterministic assignment state transitions.
+3. OpenTelemetry traces, Prometheus metrics, structured logs, and SLO dashboards across outbox/Kafka/inbox latency.
+4. Authentication/authorization boundaries for customer, driver, restaurant, and operations roles.
+5. Persisted quote/pricing snapshots and payment authorization boundaries.
+6. PostgreSQL HA/backup configuration, connection-pool sizing, and staged deployment manifests.
+7. Food ordering transactional workflow using the same idempotency/outbox/inbox patterns where appropriate.
