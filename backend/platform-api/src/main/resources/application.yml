@@ -44,6 +44,10 @@ the-app:
       lease-seconds: ${THE_APP_OUTBOX_LEASE_SECONDS:30}
       max-attempts: ${THE_APP_OUTBOX_MAX_ATTEMPTS:8}
       base-backoff-seconds: ${THE_APP_OUTBOX_BASE_BACKOFF_SECONDS:2}
+  matching:
+    consumer:
+      enabled: ${THE_APP_MATCHING_CONSUMER_ENABLED:false}
+      group-id: ${THE_APP_MATCHING_CONSUMER_GROUP_ID:driver-matching-v1}
   kafka:
     send-timeout-seconds: ${THE_APP_KAFKA_SEND_TIMEOUT_SECONDS:10}
     topics:
