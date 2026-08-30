@@ -1,64 +1,37 @@
 package io.theapp.platform.matching;
 
-import org.springframework.jdbc.core.JdbcTemplate;
+import org.springframework.dao.DuplicateKeyException;
 import org.springframework.stereotype.Service;
-import org.springframework.transaction.annotation.Transactional;
 
-import java.sql.Timestamp;
 import java.time.Instant;
 
 @Service
 public class DriverMatchingInboxStore {
 
-    private static final String CONSUMER_NAME = "driver-matching-v1";
+    private final DriverMatchingInboxTransaction transaction;
 
-    private final JdbcTemplate jdbcTemplate;
-
-    public DriverMatchingInboxStore(JdbcTemplate jdbcTemplate) {
-        this.jdbcTemplate = jdbcTemplate;
+    public DriverMatchingInboxStore(DriverMatchingInboxTransaction transaction) {
+        this.transaction = transaction;
     }
 
-    @Transactional
     public ProcessResult accept(String eventId, RideRequestedMessage message) {
-        Instant now = Instant.now();
-        int inserted = jdbcTemplate.update("""
-                INSERT INTO consumer_inbox (
-                    event_id, event_type, aggregate_id, consumer_name, received_at, processed_at
-                ) VALUES (?, ?, ?, ?, ?, ?)
-                ON CONFLICT (event_id) DO NOTHING
-                """,
-                eventId,
-                "RideRequested",
-                message.bookingId(),
-                CONSUMER_NAME,
-                Timestamp.from(now),
-                Timestamp.from(now));
-
-        if (inserted == 0) {
+        if (transaction.eventExists(eventId)) {
             return ProcessResult.DUPLICATE;
         }
 
-        jdbcTemplate.update("""
-                INSERT INTO driver_matching_request (
-                    booking_id, rider_id,
-                    pickup_label, pickup_latitude, pickup_longitude,
-                    dropoff_label, dropoff_latitude, dropoff_longitude,
-                    status, requested_at, created_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                """,
-                message.bookingId(),
-                message.riderId(),
-                message.pickup().label(),
-                message.pickup().latitude(),
-                message.pickup().longitude(),
-                message.dropoff().label(),
-                message.dropoff().latitude(),
-                message.dropoff().longitude(),
-                "PENDING",
-                Timestamp.from(message.requestedAt()),
-                Timestamp.from(now));
-
-        return ProcessResult.ACCEPTED;
+        try {
+            transaction.acceptNew(eventId, message);
+            return ProcessResult.ACCEPTED;
+        } catch (DuplicateKeyException duplicateKeyException) {
+            // A concurrent delivery of the same event may win after the initial lookup.
+            // Only classify the failure as a replay when that exact event ID now exists.
+            // Other uniqueness violations (for example, a distinct event for an already
+            // initialized booking) remain failures instead of being silently swallowed.
+            if (transaction.eventExists(eventId)) {
+                return ProcessResult.DUPLICATE;
+            }
+            throw duplicateKeyException;
+        }
     }
 
     public enum ProcessResult {

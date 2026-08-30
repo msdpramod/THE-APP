@@ -4,11 +4,13 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
+import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.jdbc.core.JdbcTemplate;
 
 import java.time.Instant;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 @SpringBootTest(properties = {
         "spring.datasource.url=jdbc:h2:mem:matching-test;MODE=PostgreSQL;DATABASE_TO_LOWER=TRUE;DB_CLOSE_DELAY=-1",
@@ -62,6 +64,23 @@ class DriverMatchingInboxStoreTest {
         String status = jdbcTemplate.queryForObject(
                 "SELECT status FROM driver_matching_request WHERE booking_id = ?", String.class, message.bookingId());
         assertThat(status).isEqualTo("PENDING");
+    }
+
+    @Test
+    void distinctEventForExistingBookingIsNotMisclassifiedAsReplay() {
+        DriverMatchingInboxStore.RideRequestedMessage message = message("ride-3");
+        inboxStore.accept("evt-ride-3a", message);
+
+        assertThatThrownBy(() -> inboxStore.accept("evt-ride-3b", message))
+                .isInstanceOf(DataIntegrityViolationException.class);
+
+        Integer secondInboxCount = jdbcTemplate.queryForObject(
+                "SELECT COUNT(*) FROM consumer_inbox WHERE event_id = ?", Integer.class, "evt-ride-3b");
+        Integer matchingCount = jdbcTemplate.queryForObject(
+                "SELECT COUNT(*) FROM driver_matching_request WHERE booking_id = ?", Integer.class, message.bookingId());
+
+        assertThat(secondInboxCount).isZero();
+        assertThat(matchingCount).isEqualTo(1);
     }
 
     private DriverMatchingInboxStore.RideRequestedMessage message(String bookingId) {
