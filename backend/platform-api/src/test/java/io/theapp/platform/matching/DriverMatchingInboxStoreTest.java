@@ -8,6 +8,12 @@ import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.jdbc.core.JdbcTemplate;
 
 import java.time.Instant;
+import java.util.List;
+import java.util.concurrent.Callable;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.Future;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
@@ -45,6 +51,45 @@ class DriverMatchingInboxStoreTest {
                 .isEqualTo(DriverMatchingInboxStore.ProcessResult.ACCEPTED);
         assertThat(inboxStore.accept(eventId, message))
                 .isEqualTo(DriverMatchingInboxStore.ProcessResult.DUPLICATE);
+
+        Integer inboxCount = jdbcTemplate.queryForObject(
+                "SELECT COUNT(*) FROM consumer_inbox WHERE event_id = ?", Integer.class, eventId);
+        Integer matchingCount = jdbcTemplate.queryForObject(
+                "SELECT COUNT(*) FROM driver_matching_request WHERE booking_id = ?", Integer.class, message.bookingId());
+
+        assertThat(inboxCount).isEqualTo(1);
+        assertThat(matchingCount).isEqualTo(1);
+    }
+
+    @Test
+    void concurrentDuplicateDeliveryCreatesOneInboxRowAndOneMatchingRequest() throws Exception {
+        String eventId = "evt-ride-concurrent";
+        DriverMatchingInboxStore.RideRequestedMessage message = message("ride-concurrent");
+        CountDownLatch ready = new CountDownLatch(2);
+        CountDownLatch start = new CountDownLatch(1);
+        ExecutorService executor = Executors.newFixedThreadPool(2);
+
+        Callable<DriverMatchingInboxStore.ProcessResult> delivery = () -> {
+            ready.countDown();
+            start.await();
+            return inboxStore.accept(eventId, message);
+        };
+
+        try {
+            Future<DriverMatchingInboxStore.ProcessResult> first = executor.submit(delivery);
+            Future<DriverMatchingInboxStore.ProcessResult> second = executor.submit(delivery);
+
+            ready.await();
+            start.countDown();
+
+            List<DriverMatchingInboxStore.ProcessResult> results = List.of(first.get(), second.get());
+            assertThat(results)
+                    .containsExactlyInAnyOrder(
+                            DriverMatchingInboxStore.ProcessResult.ACCEPTED,
+                            DriverMatchingInboxStore.ProcessResult.DUPLICATE);
+        } finally {
+            executor.shutdownNow();
+        }
 
         Integer inboxCount = jdbcTemplate.queryForObject(
                 "SELECT COUNT(*) FROM consumer_inbox WHERE event_id = ?", Integer.class, eventId);
