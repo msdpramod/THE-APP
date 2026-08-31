@@ -14,6 +14,7 @@ import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
+import java.util.concurrent.TimeUnit;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
@@ -79,10 +80,12 @@ class DriverMatchingInboxStoreTest {
             Future<DriverMatchingInboxStore.ProcessResult> first = executor.submit(delivery);
             Future<DriverMatchingInboxStore.ProcessResult> second = executor.submit(delivery);
 
-            ready.await();
+            assertThat(ready.await(5, TimeUnit.SECONDS)).isTrue();
             start.countDown();
 
-            List<DriverMatchingInboxStore.ProcessResult> results = List.of(first.get(), second.get());
+            List<DriverMatchingInboxStore.ProcessResult> results = List.of(
+                    first.get(10, TimeUnit.SECONDS),
+                    second.get(10, TimeUnit.SECONDS));
             assertThat(results)
                     .containsExactlyInAnyOrder(
                             DriverMatchingInboxStore.ProcessResult.ACCEPTED,
