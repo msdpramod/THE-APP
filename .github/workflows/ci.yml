@@ -24,6 +24,41 @@ jobs:
       - name: Verify backend
         run: mvn -B verify
 
+  backend-postgres:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_DB: theapp_test
+          POSTGRES_USER: theapp
+          POSTGRES_PASSWORD: theapp
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd="pg_isready -U theapp -d theapp_test"
+          --health-interval=10s
+          --health-timeout=5s
+          --health-retries=5
+    defaults:
+      run:
+        working-directory: backend/platform-api
+    env:
+      THE_APP_POSTGRES_IT: 'true'
+      SPRING_DATASOURCE_URL: jdbc:postgresql://localhost:5432/theapp_test
+      SPRING_DATASOURCE_USERNAME: theapp
+      SPRING_DATASOURCE_PASSWORD: theapp
+      SPRING_DATASOURCE_DRIVER_CLASS_NAME: org.postgresql.Driver
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+          cache: maven
+      - name: Verify PostgreSQL replay safety
+        run: mvn -B -Dtest=PostgresDriverMatchingInboxStoreTest test
+
   frontend:
     runs-on: ubuntu-latest
     steps:
