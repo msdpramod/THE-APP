@@ -24,18 +24,22 @@ public class RideRequestedKafkaConsumer {
     @KafkaListener(
             topics = "${the-app.kafka.topics.ride-requested:ride.requested.v1}",
             groupId = "${the-app.matching.consumer.group-id:driver-matching-v1}")
-    public void consume(ConsumerRecord<String, String> record) throws Exception {
+    public void consume(ConsumerRecord<String, String> record) {
         String eventId = requiredHeader(record, "event-id");
         String eventType = requiredHeader(record, "event-type");
         if (!"RideRequested".equals(eventType)) {
-            throw new IllegalArgumentException("Unsupported event type on ride topic: " + eventType);
+            throw new InvalidRideRequestedEventException("Unsupported event type on ride topic: " + eventType);
         }
 
-        DriverMatchingInboxStore.RideRequestedMessage message =
-                jsonMapper.readValue(record.value(), DriverMatchingInboxStore.RideRequestedMessage.class);
+        DriverMatchingInboxStore.RideRequestedMessage message;
+        try {
+            message = jsonMapper.readValue(record.value(), DriverMatchingInboxStore.RideRequestedMessage.class);
+        } catch (Exception ex) {
+            throw new InvalidRideRequestedEventException("Malformed RideRequested payload", ex);
+        }
 
         if (record.key() == null || !record.key().equals(message.bookingId())) {
-            throw new IllegalArgumentException("Kafka key must match RideRequested bookingId");
+            throw new InvalidRideRequestedEventException("Kafka key must match RideRequested bookingId");
         }
 
         inboxStore.accept(eventId, message);
@@ -44,7 +48,7 @@ public class RideRequestedKafkaConsumer {
     private String requiredHeader(ConsumerRecord<String, String> record, String name) {
         Header header = record.headers().lastHeader(name);
         if (header == null || header.value() == null || header.value().length == 0) {
-            throw new IllegalArgumentException("Missing required Kafka header: " + name);
+            throw new InvalidRideRequestedEventException("Missing required Kafka header: " + name);
         }
         return new String(header.value(), StandardCharsets.UTF_8);
     }
