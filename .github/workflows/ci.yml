@@ -155,8 +155,8 @@ jobs:
           distribution: temurin
           java-version: '17'
           cache: maven
-      - name: Verify Kafka-to-PostgreSQL replay safety
-        run: mvn -B -Dtest=KafkaPostgresDriverMatchingReplayIntegrationTest test
+      - name: Verify Kafka-to-PostgreSQL replay and poison-event safety
+        run: mvn -B -Dtest=KafkaPostgresDriverMatchingReplayIntegrationTest,KafkaPostgresPoisonEventIntegrationTest test
 
   frontend:
     runs-on: ubuntu-latest
