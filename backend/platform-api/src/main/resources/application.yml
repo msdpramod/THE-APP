@@ -48,6 +48,9 @@ the-app:
     consumer:
       enabled: ${THE_APP_MATCHING_CONSUMER_ENABLED:false}
       group-id: ${THE_APP_MATCHING_CONSUMER_GROUP_ID:driver-matching-v1}
+      dead-letter-topic: ${THE_APP_MATCHING_DEAD_LETTER_TOPIC:ride.requested.v1.dlt}
+      retry-backoff-ms: ${THE_APP_MATCHING_RETRY_BACKOFF_MS:1000}
+      max-retries: ${THE_APP_MATCHING_MAX_RETRIES:2}
   kafka:
     send-timeout-seconds: ${THE_APP_KAFKA_SEND_TIMEOUT_SECONDS:10}
     topics:
