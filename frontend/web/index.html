@@ -1,0 +1,57 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta name="description" content="THE APP — one place for rides and food." />
+  <title>THE APP</title>
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+  <main class="shell">
+    <header class="topbar">
+      <a class="brand" href="#">THE APP<span>.</span></a>
+      <nav aria-label="Primary navigation">
+        <button class="nav-pill active" data-mode="ride">Ride</button>
+        <button class="nav-pill" data-mode="food">Food</button>
+      </nav>
+      <button class="profile" aria-label="Open profile">PK</button>
+    </header>
+
+    <section class="hero">
+      <div>
+        <p class="eyebrow">MOVE · EAT · LIVE</p>
+        <h1 id="headline">Your city,<br><em>on demand.</em></h1>
+        <p id="subhead" class="subhead">Get a reliable ride in minutes. Clear pricing before you move.</p>
+      </div>
+      <div class="orb" aria-hidden="true"><span></span></div>
+    </section>
+
+    <section id="ride-panel" class="panel">
+      <div class="field-grid">
+        <label>Pickup
+          <input id="pickup" value="Madhapur" autocomplete="off" />
+        </label>
+        <label>Dropoff
+          <input id="dropoff" value="HITEC City" autocomplete="off" />
+        </label>
+      </div>
+      <button id="quote-btn" class="primary">Get ride estimate <span>→</span></button>
+      <div id="quote-result" class="result" aria-live="polite"></div>
+      <button id="book-btn" class="primary hidden">Request this ride <span>→</span></button>
+      <div id="booking-result" class="result" aria-live="polite"></div>
+    </section>
+
+    <section id="food-panel" class="panel hidden">
+      <div class="section-head">
+        <div><p class="eyebrow">NEAR YOU</p><h2>What are you craving?</h2></div>
+        <button id="refresh-food" class="secondary">Refresh</button>
+      </div>
+      <div id="restaurant-list" class="restaurant-grid" aria-live="polite"></div>
+    </section>
+
+    <footer><span>THE APP / FOUNDATION 002</span><span>Hyderabad</span></footer>
+  </main>
+  <script src="app.js" defer></script>
+</body>
+</html>

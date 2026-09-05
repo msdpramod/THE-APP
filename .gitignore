@@ -1,0 +1,23 @@
+# Java
+**/target/
+*.class
+
+# IDE
+.idea/
+.vscode/
+*.iml
+
+# OS
+.DS_Store
+
+# Logs
+*.log
+
+# Local env
+.env
+.env.*
+!.env.example
+
+# Frontend tooling (future-compatible)
+node_modules/
+dist/
